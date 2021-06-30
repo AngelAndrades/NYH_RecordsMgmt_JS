@@ -1,0 +1,192 @@
+<link href="https://kendo.cdn.telerik.com/2020.3.915/styles/kendo.material-v2.min.css" rel="stylesheet" />
+
+<script src="https://code.jquery.com/jquery-3.5.1.min.js" integrity="sha256-9/aliU8dGd2tb6OSsuzixeV4y/faTqgFtohetphbbj0=" crossorigin="anonymous"></script>
+<script src="https://kendo.cdn.telerik.com/2020.3.915/js/kendo.all.min.js"></script>
+<script src="https://kendo.cdn.telerik.com/2020.3.915/js/jszip.min.js"></script>
+
+<div id="message">
+    <em style="color:maroon"><strong>This report may take a minute before loading...</strong></em>
+</div>
+<div id="chart"></div>
+<div style="height:30px;">&nbsp;</div>
+
+<div id="grid"></div>
+
+<script type="text/javascript">
+    //JS counter vars for chart
+    var curyear = 0, yearless1 = 0, yearless2 = 0, yearless3 = 0, noyear = 0, total = 0;
+
+    //JS Arrays to be used for Kendo DataSources
+    var resArray = [];
+    var chartArray = [];
+    var gridDS;
+
+    //Date to be used to check for old content
+    var today = new Date();
+
+    $(function () {
+        $("#chart").kendoChart({
+            dataSource: { data: chartArray },
+            title: { text: 'Records Inventory Completion Rates' },
+            legend: { visible: false },
+            series: [{
+                type: "horizontalWaterfall",
+                field: 'elapsed',
+                categoryField: 'caption',
+                summaryField: 'summary',
+                color: function(point) {
+                    return palette[point.index % palette.length];
+                },
+                labels: { visible: true }
+            }],
+            axisDefaults: {
+                majorGridLines: { visible: false }
+            },
+            valueAxis: { 
+                labels: { format: '{0}'} 
+            },
+            plotAreaClick: function(e) {
+                var temp = e.category;
+
+                if(e.category == 'Total') gridDS.filter({});
+                else gridDS.filter({ field: 'fiscalyear', operator: 'eq', value: temp });
+            }
+        });
+
+        var palette = [
+            "#660000", "#95c3cd", "#abc75b", "#c6816f", "#968cb2", "#c0c0c0", "#2ba6ff"
+        ];
+
+        $('#grid').kendoGrid({
+            toolbar: ['pdf', 'excel'],
+            dataSource: [],
+            scrollable: true,
+            columnMenu: true,
+            filterable: true,
+            sortable: true,
+            groupable: false,
+            resizable: true,
+            pageable: {
+                pageSize: 10,
+                buttonCount: 3,
+                pageSizes: [10, 25, 50, 100, 'all'],
+                messages: {
+                    display: 'Showing {0}-{1} from {2} records',
+                    empty: 'No records found.',
+                    itemsPerPage: 'records per page'
+                }
+            },
+            columns: [
+                { field: 'department', title: 'Department', width: '20%' },
+                { field: 'servicechief', title: 'Service Chief(s)', width: '20%' },
+                { field: 'rlo', title: 'RLO', width: '20%' },
+                { field: 'invdate', title: 'Inventory Date', template: '#= kendo.toString(kendo.parseDate(invdate, "yyyy-MM-dd"), "MMM d, yyyy") #', width: '20%' },
+                { field: 'fiscalyear', title: 'Fiscal Year', hidden: true }
+            ]
+        });
+
+        function GetData()
+        {
+            kendo.ui.progress($('#grid'), true);
+            kendo.ui.progress($('#chart'), true);
+
+            $.ajax({
+                method: 'GET',
+                url: "/sites/VHANYHIntranet/recordsmgmt/_api/web/lists/getbytitle('List%20of%20Services')/items?$select=Title,Service_x0020_ChiefId,RLO/FirstName,RLO/LastName,Inventory_x0020_Completed&$expand=RLO/Id",
+                beforeSend: function (xhr) {
+                    xhr.setRequestHeader("Accept", "application/json;odata=verbose")
+                }
+            })
+            .done(function (data) {
+                
+                $.each(data.d.results, function(key,val) {
+                    var propObject = {}; 
+                    propObject['department'] = val.Title;
+                    propObject['servicechief'] = getUserInfo(val.Service_x0020_ChiefId.results);
+                    propObject['rlo'] = (val.RLO.LastName != undefined) ? val.RLO.LastName + ', ' + val.RLO.FirstName : '';
+                    propObject['invdate'] = val.Inventory_x0020_Completed;
+                    propObject['fiscalyear'] = getFiscalYear(val.Inventory_x0020_Completed);
+
+                    if (getFiscalYear(val.Inventory_x0020_Completed) == getFiscalYear(today) ) curyear++;
+                    if (getFiscalYear(val.Inventory_x0020_Completed) == getFiscalYear(today)-1) yearless1++;
+                    if (getFiscalYear(val.Inventory_x0020_Completed) == getFiscalYear(today)-2) yearless2++;
+                    if (getFiscalYear(val.Inventory_x0020_Completed) < getFiscalYear(today)-2 && getFiscalYear(val.Inventory_x0020_Completed) !== 0) yearless3++;
+                    if (getFiscalYear(val.Inventory_x0020_Completed) === 'No Date') noyear++;
+
+                    resArray.push( propObject );
+                    
+                });
+
+                total = (curyear + yearless1 + yearless2 + yearless3 + noyear);
+
+                chartArray = [ 
+                    { caption: getFiscalYear(today), elapsed: curyear },
+                    { caption: (getFiscalYear(today)-1), elapsed: yearless1 },
+                    { caption: (getFiscalYear(today)-2), elapsed: yearless2 },
+                    { caption: (getFiscalYear(today)-3), elapsed: yearless3 },
+                    { caption: 'No Date', elapsed: noyear },
+                    { caption: 'Total', summary: 'total' }, 
+                ];
+
+                var chartDS = new kendo.data.DataSource({ 
+                    data: chartArray
+                });
+                kendo.ui.progress($('#chart'), false);
+                $("#chart").data("kendoChart").setDataSource(chartDS);
+                        
+                gridDS = new kendo.data.DataSource({
+                    data: resArray,
+                    pageSize: 10
+                });
+                $('#grid').data('kendoGrid').setDataSource(gridDS);
+                $('#grid').data('kendoGrid').refresh();
+                gridDS.sort({ field: 'department', dir: 'asc'});
+
+                kendo.ui.progress($('#grid'), false);
+                $('#message').hide();
+            })
+            .fail(function (e) {
+                console.log(e);
+            });
+
+        };
+
+        function getFiscalYear(itemdate) {
+            var fiscalYear = 'No Date';
+            
+            if(itemdate != null)
+            {
+                var fiscalDate = new Date(itemdate);
+                if (fiscalDate.getMonth() > 8) fiscalYear = fiscalDate.getFullYear() + 1;
+                else fiscalYear = fiscalDate.getFullYear();
+            };
+
+            return fiscalYear;
+        };
+
+        function getUserInfo(list) {
+            var usernames = '';
+
+            $.each(list, (key, val) => {
+                $.ajax({ 
+                    method: 'GET',
+                    url: "/sites/VHANYHIntranet/recordsmgmt/_api/web/getuserbyid(" + val + ")?$select=Title",
+                    async: false,
+                    beforeSend: function (xhr) { xhr.setRequestHeader("Accept", "application/json;odata=verbose") } 
+                })
+                .done(data => {
+                    if (usernames === '') usernames += data.d.Title;
+                    else usernames += '; ' + data.d.Title;
+                })
+                .fail(err => {
+                    usernames = 'Not Found/Retired';
+                });
+            });
+
+            return usernames;
+        }
+
+        GetData();
+
+    });
+</script>
